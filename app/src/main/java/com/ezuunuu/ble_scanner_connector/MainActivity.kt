@@ -15,6 +15,8 @@ import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import java.nio.charset.Charset
+import java.nio.charset.StandardCharsets
 
 class MainActivity : AppCompatActivity() {
     private var bluetoothAdapter: BluetoothAdapter? = null
@@ -29,8 +31,12 @@ class MainActivity : AppCompatActivity() {
 
     private val scanTimeout: Long = 10000 // 10 seconds
 
+    private var writeCharacteristic: BluetoothGattCharacteristic? = null
+
     companion object {
         private const val PERMISSION_REQUEST_CODE = 1
+        private val SERVICE_UUID = java.util.UUID.fromString("0000180F-0000-1000-8000-00805F9B34FB") // 예제 UUID
+        private val CHARACTERISTIC_UUID = java.util.UUID.fromString("00002A19-0000-1000-8000-00805F9B34FB") // 예제 UUID
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -74,19 +80,20 @@ class MainActivity : AppCompatActivity() {
     // 권한 부여 여부 체크
     private fun hasPermissions(): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED &&
+                    ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED
         } else {
-            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
-                    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
         }
     }
+
 
     // 권한 부여 요청
     private fun requestPermissions() {
         val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            arrayOf(Manifest.permission.BLUETOOTH_SCAN)
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
         } else {
-            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
         ActivityCompat.requestPermissions(this, permissions, PERMISSION_REQUEST_CODE)
     }
@@ -161,15 +168,21 @@ class MainActivity : AppCompatActivity() {
     private val scanCallback = object : ScanCallback() {
         override fun onScanResult(callbackType: Int, result: ScanResult) {
             val device: BluetoothDevice = result.device
-            val deviceName = try {
+            var deviceName: String? = null
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (ActivityCompat.checkSelfPermission(this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED) {
-                    device.name ?: "Unknown Device"
-                } else {
-                    "Permission Required"
+                    deviceName = device.name
                 }
-            } catch (e: Exception) {
-                "Unable to read device name: ${e.message}"
+            } else {
+                deviceName = device.name
             }
+
+            // 광고 데이터에서 기기 이름 추출 (Null 방지)
+            if (deviceName.isNullOrEmpty()) {
+                deviceName = result.scanRecord?.deviceName ?: "Unknown Device"
+            }
+
             val deviceInfo = "$deviceName - ${device.address}"
             if (!deviceList.contains(deviceInfo)) {
                 deviceList.add(deviceInfo)
@@ -177,6 +190,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
     }
+
+
 
     private fun connectToDevice(deviceAddress: String) {
         status = BluetoothStatus.connecting
@@ -219,6 +234,27 @@ class MainActivity : AppCompatActivity() {
             }
         } catch (e: SecurityException) {
             Toast.makeText(this, "Unable to disconnecting: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun sendPacket(data: ByteArray) {
+        try {
+            writeCharacteristic?.let {
+                it.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+                bluetoothGatt?.let { gatt ->
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        gatt.writeCharacteristic(it, data, BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT)
+                    } else {
+                        it.value = data
+                        gatt.writeCharacteristic(it)
+                    }
+                }
+                Toast.makeText(this, "Sent: ${data.joinToString(",")}", Toast.LENGTH_SHORT).show()
+            } ?: run {
+                Toast.makeText(this, "Characteristic not found", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: SecurityException) {
+            Toast.makeText(this, "Send Packet failed: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
