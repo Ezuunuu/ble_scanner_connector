@@ -1,4 +1,4 @@
-package com.ezuunuu.ble_scanner_connector
+package com.ezuunuu.ble_scanner_connector.model
 
 enum class BluetoothStatus {
     initial,
